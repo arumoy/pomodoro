@@ -1,26 +1,37 @@
-// settings.h - Persist/restore user settings in the Windows registry
+// settings.h - Settings: per-user persistence in the Windows registry
 // (HKCU\Software\Tomato\PomodoroTimer).
 #ifndef TOMATO_SETTINGS_H
 #define TOMATO_SETTINGS_H
 
 #include <windows.h>
+#include <string>
 
-// Registry value names (public so other modules can read/write their own).
-#define VAL_WORK_MIN   L"DefaultWorkMinutes"
-#define VAL_REST_MIN   L"DefaultRestMinutes"
-#define VAL_WORK_SOUND L"WorkSoundPath"
+class Settings {
+public:
+    // Load persisted values from the registry (clamped to valid bounds);
+    // missing values keep their factory defaults.
+    void load();
 
-// Low-level typed registry helpers (operate on the app's settings key).
-BOOL RegReadDword(const wchar_t *valueName, DWORD *out);
-BOOL RegWriteDword(const wchar_t *valueName, DWORD value);
-BOOL RegReadString(const wchar_t *valueName, wchar_t *out, DWORD cchOut);
-BOOL RegWriteString(const wchar_t *valueName, const wchar_t *value);
+    // Persist the default work/rest minutes. Returns true on success.
+    bool saveDefaultTimes();
 
-// Load persisted settings into the globals (clamping to valid bounds); missing
-// values keep their factory defaults.
-void LoadSettings(void);
+    // Persist the work-sound path. Returns true on success.
+    bool saveWorkSound();
 
-// Persist the default work/rest minute globals. Returns TRUE on success.
-BOOL SaveSettings(void);
+    // Accessors.
+    int defaultWorkMin() const { return defaultWorkMin_; }
+    int defaultRestMin() const { return defaultRestMin_; }
+    void setDefaultWorkMin(int m) { defaultWorkMin_ = m; }
+    void setDefaultRestMin(int m) { defaultRestMin_ = m; }
+
+    const std::wstring& workSoundPath() const { return workSoundPath_; }
+    void setWorkSoundPath(std::wstring path) { workSoundPath_ = std::move(path); }
+    bool hasWorkSound() const { return !workSoundPath_.empty(); }
+
+private:
+    int          defaultWorkMin_ = 25;  // factory defaults (see resource.h)
+    int          defaultRestMin_ = 5;
+    std::wstring workSoundPath_;         // empty = no work sound
+};
 
 #endif // TOMATO_SETTINGS_H

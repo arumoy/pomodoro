@@ -1,19 +1,35 @@
-// sound.h - Audio: the end-of-phase ding chime and the looping work sound.
+// sound.h - WorkSound: the end-of-phase ding chime and the looping work sound.
 #ifndef TOMATO_SOUND_H
 #define TOMATO_SOUND_H
 
 #include <windows.h>
+#include <string>
 
-// Play the short end-of-phase "ding bell" chime (non-blocking).
-void PlayDingTune(void);
+class WorkSound {
+public:
+    WorkSound() = default;
+    ~WorkSound();   // stops any looping playback
 
-// Start / stop looping the configured work-sound .wav (async).
-void StartWorkSound(void);
-void StopWorkSound(void);
+    WorkSound(const WorkSound&) = delete;
+    WorkSound& operator=(const WorkSound&) = delete;
 
-// Reconcile work-sound playback with the current timer state: it should loop
-// only while the timer is running AND in the WORK phase. Call at every state
-// change (start, stop, phase transition).
-void UpdateWorkSound(void);
+    // Set the .wav to loop (empty disables). Does not start playback.
+    void setPath(std::wstring path) { path_ = std::move(path); }
+    const std::wstring& path() const { return path_; }
+    bool hasPath() const { return !path_.empty(); }
+
+    // Start / stop the async loop. start() is a no-op if no path is set.
+    void start();
+    void stop();
+    bool playing() const { return playing_; }
+
+    // Play the short end-of-phase "ding bell" chime (non-blocking). Static
+    // because it does not depend on instance state.
+    static void playDing();
+
+private:
+    std::wstring path_;
+    bool         playing_ = false;
+};
 
 #endif // TOMATO_SOUND_H

@@ -22,8 +22,8 @@ set "SRCDIR=src"
 set "INCDIR=src\headers"
 set "OBJDIR=build\obj"
 set "OUTDIR=build"
-REM All application translation units (one per functional module).
-set "SRCS=%SRCDIR%\main.cpp %SRCDIR%\app.cpp %SRCDIR%\settings.cpp %SRCDIR%\sound.cpp %SRCDIR%\timer.cpp %SRCDIR%\settings_dlg.cpp %SRCDIR%\worksound_menu.cpp %SRCDIR%\ui.cpp"
+REM All application translation units (one per functional module/class).
+set "SRCS=%SRCDIR%\main.cpp %SRCDIR%\settings.cpp %SRCDIR%\sound.cpp %SRCDIR%\timer.cpp %SRCDIR%\settings_dlg.cpp %SRCDIR%\ui.cpp"
 set "RC=%SRCDIR%\pomodoro.rc"
 set "RES=%OBJDIR%\pomodoro.res"
 set "OUT=%OUTDIR%\pomodoro.exe"
@@ -74,13 +74,14 @@ if errorlevel 1 (
 REM --- Compile and link ----------------------------------------------------
 REM   /W4        high warning level
 REM   /EHsc      standard C++ exception handling
+REM   /std:c++17 C++17 (std::optional, std::wstring, std::function)
 REM   /O2        optimize for speed
 REM   /GS        buffer security checks (stack canaries)
 REM   /sdl       additional security checks
 REM   /Fo        intermediate object directory (trailing backslash)
 REM   /subsystem:windows  GUI app (uses wWinMain, no console)
 echo [INFO] Compiling and linking %OUT%...
-cl /nologo /W4 /EHsc /O2 /GS /sdl /DUNICODE /D_UNICODE ^
+cl /nologo /W4 /EHsc /std:c++17 /O2 /GS /sdl /DUNICODE /D_UNICODE ^
    /I "%INCDIR%" ^
    /Fo"%OBJDIR%\\" ^
    %SRCS% "%RES%" ^
