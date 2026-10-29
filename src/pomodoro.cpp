@@ -20,7 +20,8 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <strsafe.h>
-#include <mmsystem.h>  // Beep via the kernel; see PlayDingTune
+#include <mmsystem.h>   // Beep + PlaySound (looping work sound)
+#include <commdlg.h>    // GetOpenFileNameW (choose the .wav)
 
 // ---------------------------------------------------------------------------
 // Control identifiers
@@ -43,6 +44,8 @@
 // Menu command IDs.
 #define IDM_SETTINGS    301   // Settings -> Default Times...
 #define IDM_EXIT        302   // Settings -> Exit
+#define IDM_WORK_SOUND  303   // Settings -> Select Work Sound (.wav)...
+#define IDM_CLEAR_SOUND 304   // Settings -> Clear Work Sound
 
 // Persistent-settings bounds (minutes).
 #define MIN_DEFAULT_WORK_MIN 1
@@ -103,10 +106,16 @@ static HBRUSH   g_hBgBrush   = NULL;   // light orange background brush
 static int g_defaultWorkMin = DEFAULT_WORK_MIN;
 static int g_defaultRestMin = DEFAULT_REST_MIN;
 
+// Path to a user-chosen .wav that loops while the timer is in the WORK phase.
+// Empty string means "no work sound". Persisted in the registry.
+static wchar_t g_workSoundPath[MAX_PATH] = L"";
+static BOOL    g_workSoundPlaying = FALSE;  // is the loop currently playing?
+
 // Standard per-user settings location on Windows: HKCU\Software\...
 #define SETTINGS_SUBKEY  L"Software\\Tomato\\PomodoroTimer"
 #define VAL_WORK_MIN     L"DefaultWorkMinutes"
 #define VAL_REST_MIN     L"DefaultRestMinutes"
+#define VAL_WORK_SOUND   L"WorkSoundPath"
 
 // Read a DWORD value from the settings key. Returns TRUE and writes *out when
 // the value exists; otherwise leaves *out untouched and returns FALSE.
@@ -142,6 +151,51 @@ static BOOL RegWriteDword(const wchar_t *valueName, DWORD value) {
     return rc == ERROR_SUCCESS;
 }
 
+// Read a string (REG_SZ) value into a caller-supplied buffer. Returns TRUE on
+// success with a NUL-terminated result; FALSE if the value is missing or the
+// type is unexpected. On failure, writes an empty string.
+static BOOL RegReadString(const wchar_t *valueName, wchar_t *out, DWORD cchOut) {
+    if (cchOut == 0) return FALSE;
+    out[0] = L'\0';
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, SETTINGS_SUBKEY, 0, KEY_QUERY_VALUE,
+                      &hKey) != ERROR_SUCCESS) {
+        return FALSE;
+    }
+    DWORD type = 0;
+    DWORD cb = cchOut * sizeof(wchar_t);  // bytes available
+    LONG rc = RegQueryValueExW(hKey, valueName, NULL, &type,
+                               (LPBYTE)out, &cb);
+    RegCloseKey(hKey);
+    if (rc == ERROR_SUCCESS && type == REG_SZ) {
+        // Ensure NUL termination regardless of how the value was stored.
+        DWORD cch = cb / sizeof(wchar_t);
+        if (cch >= cchOut) cch = cchOut - 1;
+        out[cch] = L'\0';
+        return TRUE;
+    }
+    out[0] = L'\0';
+    return FALSE;
+}
+
+// Write a string (REG_SZ) value into the settings key (creating it if needed).
+static BOOL RegWriteString(const wchar_t *valueName, const wchar_t *value) {
+    HKEY hKey;
+    DWORD disp = 0;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, SETTINGS_SUBKEY, 0, NULL,
+                        REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL,
+                        &hKey, &disp) != ERROR_SUCCESS) {
+        return FALSE;
+    }
+    size_t len = 0;
+    StringCchLengthW(value, MAX_PATH, &len);
+    DWORD cb = (DWORD)((len + 1) * sizeof(wchar_t));  // include NUL
+    LONG rc = RegSetValueExW(hKey, valueName, 0, REG_SZ,
+                             (const BYTE *)value, cb);
+    RegCloseKey(hKey);
+    return rc == ERROR_SUCCESS;
+}
+
 // Load persisted defaults into the globals, clamping to valid bounds. Missing
 // values fall back to the factory defaults already in the globals.
 static void LoadSettings(void) {
@@ -156,6 +210,8 @@ static void LoadSettings(void) {
             g_defaultRestMin = (int)v;
         }
     }
+    // Work sound path (optional). Empty/missing -> no sound.
+    RegReadString(VAL_WORK_SOUND, g_workSoundPath, ARRAYSIZE(g_workSoundPath));
 }
 
 // Persist the current default globals to the registry.
@@ -245,6 +301,41 @@ static void PlayDingTune(void) {
     }
 }
 
+// Stop any currently looping work sound.
+static void StopWorkSound(void) {
+    if (g_workSoundPlaying) {
+        PlaySoundW(NULL, NULL, 0);   // halt async playback
+        g_workSoundPlaying = FALSE;
+    }
+}
+
+// Start looping the configured work sound (async). No-op if no path is set.
+static void StartWorkSound(void) {
+    if (g_workSoundPath[0] == L'\0') {
+        return;  // nothing configured
+    }
+    // SND_LOOP requires SND_ASYNC; loops until PlaySound(NULL, ...) is called.
+    if (PlaySoundW(g_workSoundPath, NULL,
+                   SND_FILENAME | SND_ASYNC | SND_LOOP | SND_NODEFAULT)) {
+        g_workSoundPlaying = TRUE;
+    } else {
+        g_workSoundPlaying = FALSE;  // file missing/unreadable: stay silent
+    }
+}
+
+// Reconcile the work-sound playback with the current timer state: it should
+// loop only while the timer is running AND in the WORK phase. Called at every
+// state change (start, stop, phase transition).
+static void UpdateWorkSound(void) {
+    BOOL shouldPlay = (g_app.running && g_app.phase == PHASE_WORK &&
+                       g_workSoundPath[0] != L'\0');
+    if (shouldPlay && !g_workSoundPlaying) {
+        StartWorkSound();
+    } else if (!shouldPlay && g_workSoundPlaying) {
+        StopWorkSound();
+    }
+}
+
 // Update the countdown label (MM:SS) and the phase label.
 static void UpdateDisplay(void) {
     int minutes = g_app.remainingSeconds / 60;
@@ -304,7 +395,11 @@ static void StartTimer(HWND hwnd) {
                     MB_OK | MB_ICONERROR);
         g_app.running = FALSE;
         SetRunningUI(FALSE);
+        return;
     }
+
+    // We are now running in the WORK phase: begin the looping work sound.
+    UpdateWorkSound();
 }
 
 static void StopTimer(HWND hwnd) {
@@ -312,6 +407,7 @@ static void StopTimer(HWND hwnd) {
         KillTimer(hwnd, TIMER_ID);
         g_app.running = FALSE;
     }
+    StopWorkSound();   // silence the looping work sound
     SetRunningUI(FALSE);
     SetWindowTextW(g_app.hPhaseLabel, L"STOPPED");
     SetWindowTextW(g_app.hTimeLabel,  L"00:00");
@@ -347,6 +443,10 @@ static void OnTick(HWND hwnd) {
             g_app.phase            = PHASE_WORK;
             g_app.remainingSeconds = g_app.workSeconds;
         }
+
+        // The phase may have changed: start the work sound when entering WORK,
+        // stop it when entering REST.
+        UpdateWorkSound();
     }
 
     UpdateDisplay();
@@ -561,6 +661,54 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
 
 
 // ---------------------------------------------------------------------------
+// Work-sound selection
+// ---------------------------------------------------------------------------
+
+// Open a file dialog to choose a .wav for the work-phase loop. On success,
+// stores the path in the global and persists it, and (re)starts the loop if
+// the timer is currently in the WORK phase.
+static void ChooseWorkSound(HWND hwnd) {
+    wchar_t path[MAX_PATH];
+    // Seed with the current path so the dialog opens near it.
+    StringCchCopyW(path, ARRAYSIZE(path), g_workSoundPath);
+
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = hwnd;
+    ofn.lpstrFilter = L"WAV audio (*.wav)\0*.wav\0All files (*.*)\0*.*\0";
+    ofn.lpstrFile   = path;
+    ofn.nMaxFile    = ARRAYSIZE(path);
+    ofn.lpstrTitle  = L"Select a .wav to loop during WORK";
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    ofn.lpstrDefExt = L"wav";
+
+    if (!GetOpenFileNameW(&ofn)) {
+        return;  // user cancelled (or an error); leave settings unchanged
+    }
+
+    StringCchCopyW(g_workSoundPath, ARRAYSIZE(g_workSoundPath), path);
+    if (!RegWriteString(VAL_WORK_SOUND, g_workSoundPath)) {
+        MessageBoxW(hwnd,
+                    L"The work-sound path could not be saved to the registry.",
+                    L"Warning", MB_OK | MB_ICONWARNING);
+    }
+
+    // If we are mid-WORK, restart the loop so the new file takes effect now.
+    StopWorkSound();
+    UpdateWorkSound();
+}
+
+// Clear the configured work sound and stop any current playback.
+static void ClearWorkSound(HWND hwnd) {
+    g_workSoundPath[0] = L'\0';
+    RegWriteString(VAL_WORK_SOUND, L"");
+    StopWorkSound();
+    MessageBoxW(hwnd, L"Work sound cleared.", L"Settings",
+                MB_OK | MB_ICONINFORMATION);
+}
+
+
+// ---------------------------------------------------------------------------
 // Window procedure
 // ---------------------------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -588,6 +736,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
         case IDM_EXIT:
             DestroyWindow(hwnd);
             return 0;
+        case IDM_WORK_SOUND:
+            ChooseWorkSound(hwnd);
+            return 0;
+        case IDM_CLEAR_SOUND:
+            ClearWorkSound(hwnd);
+            return 0;
         }
         break;
 
@@ -608,6 +762,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
         if (g_app.running) {
             KillTimer(hwnd, TIMER_ID);
         }
+        StopWorkSound();   // stop any looping audio before exit
         if (g_hTimeFont)  DeleteObject(g_hTimeFont);
         if (g_hPhaseFont) DeleteObject(g_hPhaseFont);
         if (g_hUiFont)    DeleteObject(g_hUiFont);
@@ -685,6 +840,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     HMENU hMenuBar = CreateMenu();
     HMENU hSettings = CreatePopupMenu();
     AppendMenuW(hSettings, MF_STRING, IDM_SETTINGS, L"Default Times...");
+    AppendMenuW(hSettings, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hSettings, MF_STRING, IDM_WORK_SOUND,
+                L"Select Work Sound (.wav)...");
+    AppendMenuW(hSettings, MF_STRING, IDM_CLEAR_SOUND, L"Clear Work Sound");
     AppendMenuW(hSettings, MF_SEPARATOR, 0, NULL);
     AppendMenuW(hSettings, MF_STRING, IDM_EXIT, L"Exit");
     AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hSettings, L"Settings");

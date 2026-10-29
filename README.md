@@ -16,6 +16,10 @@ the Win32 API and compiled with the Microsoft Visual C++ (MSVC) toolchain.
 - Custom tomato application icon (multi-resolution `.ico`)
 - A **Settings** menu to set the default Work/Rest minutes, persisted per-user
   in the Windows registry (`HKCU\Software\Tomato\PomodoroTimer`)
+- A **Settings → Select Work Sound (.wav)…** option to choose a `.wav` that
+  loops continuously while the timer is in the **WORK** phase (it stops during
+  REST and when stopped). The path is persisted in the same registry key;
+  **Clear Work Sound** removes it.
 
 No external libraries, package managers, or runtimes are required — only the
 Windows SDK and MSVC that ship with Visual Studio Build Tools.
@@ -68,7 +72,7 @@ need the full Visual Studio IDE — the free **Build Tools** are enough.
 
    These provide `cl.exe` (compiler), `link.exe` (linker), `rc.exe` (resource
    compiler), and the Win32 headers/libraries this project links against
-   (`user32.lib`, `gdi32.lib`, `comctl32.lib`, `advapi32.lib`).
+   (`user32.lib`, `gdi32.lib`, `comctl32.lib`, `advapi32.lib`, `winmm.lib`, `comdlg32.lib`).
 
 > This project was built and verified against **Visual Studio Build Tools 2026**
 > with **MSVC 14.50.x** targeting x64, but any reasonably recent MSVC (v143+)
@@ -140,7 +144,7 @@ build\pomodoro.exe
       /Fo"build\obj\\" ^
       src\pomodoro.cpp build\obj\pomodoro.res ^
       /link /subsystem:windows ^
-      user32.lib gdi32.lib comctl32.lib advapi32.lib ^
+      user32.lib gdi32.lib comctl32.lib advapi32.lib winmm.lib comdlg32.lib ^
       /out:"build\pomodoro.exe"
    ```
 
