@@ -3,10 +3,11 @@ REM ===========================================================================
 REM build.bat - Build the Pomodoro Timer for Windows x64 using MSVC.
 REM
 REM Project layout:
-REM   src\        source, resource script, manifest, icon generator
-REM   resources\  tomato.png (source art) and tomato.ico (generated)
-REM   build\      final binary (pomodoro.exe)
-REM   build\obj\  intermediate/generated files (.obj, .res)
+REM   src\          .cpp translation units, resource script, manifest, icon gen
+REM   src\headers\  .h headers (shared declarations)
+REM   resources\    tomato.png (source art) and tomato.ico (generated)
+REM   build\        final binary (pomodoro.exe)
+REM   build\obj\    intermediate/generated files (.obj, .res)
 REM
 REM Locates the Visual Studio Build Tools via vswhere, initializes the x64
 REM developer environment, compiles the resource script, then compiles and
@@ -18,9 +19,11 @@ REM Always operate relative to this script's directory (the project root).
 pushd "%~dp0"
 
 set "SRCDIR=src"
+set "INCDIR=src\headers"
 set "OBJDIR=build\obj"
 set "OUTDIR=build"
-set "SRC=%SRCDIR%\pomodoro.cpp"
+REM All application translation units (one per functional module).
+set "SRCS=%SRCDIR%\main.cpp %SRCDIR%\app.cpp %SRCDIR%\settings.cpp %SRCDIR%\sound.cpp %SRCDIR%\timer.cpp %SRCDIR%\settings_dlg.cpp %SRCDIR%\worksound_menu.cpp %SRCDIR%\ui.cpp"
 set "RC=%SRCDIR%\pomodoro.rc"
 set "RES=%OBJDIR%\pomodoro.res"
 set "OUT=%OUTDIR%\pomodoro.exe"
@@ -62,7 +65,7 @@ REM --- Compile the resource script -----------------------------------------
 REM The icon path inside the .rc is relative to the .rc file (src\), so it
 REM references ..\resources\tomato.ico.
 echo [INFO] Compiling resources...
-rc /nologo /fo "%RES%" "%RC%"
+rc /nologo /I "%INCDIR%" /fo "%RES%" "%RC%"
 if errorlevel 1 (
     echo [ERROR] Resource compilation failed.
     popd & exit /b 1
@@ -78,8 +81,9 @@ REM   /Fo        intermediate object directory (trailing backslash)
 REM   /subsystem:windows  GUI app (uses wWinMain, no console)
 echo [INFO] Compiling and linking %OUT%...
 cl /nologo /W4 /EHsc /O2 /GS /sdl /DUNICODE /D_UNICODE ^
+   /I "%INCDIR%" ^
    /Fo"%OBJDIR%\\" ^
-   "%SRC%" "%RES%" ^
+   %SRCS% "%RES%" ^
    /link /subsystem:windows ^
    user32.lib gdi32.lib comctl32.lib advapi32.lib winmm.lib comdlg32.lib ^
    /out:"%OUT%"

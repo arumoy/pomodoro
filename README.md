@@ -33,8 +33,20 @@ Tomato/
 ├── build.bat                 Build orchestrator (run from the project root)
 ├── README.md                 This file
 ├── src/
-│   ├── pomodoro.cpp          Application source
-│   ├── pomodoro.rc           Resource script (icon + manifest)
+│   ├── main.cpp              Entry point (wWinMain), window/menu setup
+│   ├── app.cpp               Definitions of the shared global state
+│   ├── settings.cpp          Registry load/save (per-user settings)
+│   ├── sound.cpp             Ding chime + looping work sound
+│   ├── timer.cpp             Core countdown logic + input validation
+│   ├── settings_dlg.cpp      "Default Times" settings dialog
+│   ├── worksound_menu.cpp    Work-sound menu handlers (choose/clear)
+│   ├── ui.cpp                Control creation + window procedure
+│   ├── headers/              Shared headers (one per module + shared)
+│   │   ├── resource.h        All IDs/constants/theme (shared with the .rc)
+│   │   ├── app.h             Shared types (Phase, AppState) + extern globals
+│   │   ├── settings.h  sound.h  timer.h
+│   │   ├── settings_dlg.h  worksound_menu.h  ui.h
+│   ├── pomodoro.rc           Resource script (icon + manifest + dialog)
 │   ├── pomodoro.manifest     Visual styles (Common Controls v6) + DPI awareness
 │   └── make_icon.ps1         Regenerates resources/tomato.ico from the PNG
 ├── resources/
@@ -45,8 +57,10 @@ Tomato/
     └── obj/                  Intermediate files (.obj, .res)
 ```
 
-> The `build/` directory is generated output. If you use version control you
-> probably want to add it (and any generated `.ico`) to `.gitignore`.
+> The code is split by functionality: the core timer, each menu feature, the
+> settings dialog, audio, persistence, and the UI shell each live in their own
+> translation unit, with declarations in `src/headers/`. `build.bat` compiles
+> every `.cpp` under `src/` and adds `src/headers` to the include path.
 
 ---
 
@@ -135,14 +149,17 @@ build\pomodoro.exe
    `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` component.
 2. **Initialize the x64 environment** by calling that install's
    `VC\Auxiliary\Build\vcvars64.bat` (puts `cl`, `link`, `rc`, and the SDK on `PATH`).
-3. **Compile resources:** `rc /fo build\obj\pomodoro.res src\pomodoro.rc`
-   (embeds the icon and the application manifest).
-4. **Compile and link:**
+3. **Compile resources:** `rc /I src\headers /fo build\obj\pomodoro.res src\pomodoro.rc`
+   (embeds the icon and the application manifest; the `.rc` includes `resource.h`).
+4. **Compile and link** (all modules in one invocation):
 
    ```
    cl /nologo /W4 /EHsc /O2 /GS /sdl /DUNICODE /D_UNICODE ^
+      /I src\headers ^
       /Fo"build\obj\\" ^
-      src\pomodoro.cpp build\obj\pomodoro.res ^
+      src\main.cpp src\app.cpp src\settings.cpp src\sound.cpp ^
+      src\timer.cpp src\settings_dlg.cpp src\worksound_menu.cpp src\ui.cpp ^
+      build\obj\pomodoro.res ^
       /link /subsystem:windows ^
       user32.lib gdi32.lib comctl32.lib advapi32.lib winmm.lib comdlg32.lib ^
       /out:"build\pomodoro.exe"
