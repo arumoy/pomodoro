@@ -8,6 +8,7 @@
 
 namespace {
 const wchar_t kClassName[] = L"PomodoroTimerWindow";
+const wchar_t kBaseTitle[] = L"Pomodoro Timer";
 }
 
 MainWindow::MainWindow(HINSTANCE hInst)
@@ -67,7 +68,7 @@ bool MainWindow::create(int nCmdShow) {
 
     // Pass `this` through CreateWindow so WM_NCCREATE can stash it.
     hwnd_ = CreateWindowExW(
-        0, kClassName, L"Pomodoro Timer", style,
+        0, kClassName, kBaseTitle, style,
         CW_USEDEFAULT, CW_USEDEFAULT,
         rc.right - rc.left, rc.bottom - rc.top,
         nullptr, hMenuBar, hInst_, this);
@@ -170,19 +171,42 @@ void MainWindow::createControls() {
 // ITimerView
 // ---------------------------------------------------------------------------
 void MainWindow::showTime(int remainingSeconds) {
+    lastRemaining_ = remainingSeconds;
     wchar_t buf[16];
     StringCchPrintfW(buf, ARRAYSIZE(buf), L"%02d:%02d",
                      remainingSeconds / 60, remainingSeconds % 60);
     SetWindowTextW(hTimeLabel_, buf);
+    updateTitle();   // keep the taskbar text current while minimized
 }
 
 void MainWindow::showPhase(Phase phase) {
+    lastPhase_ = phase;
     SetWindowTextW(hPhaseLabel_, phase == Phase::Work ? L"WORK" : L"REST");
+    updateTitle();
 }
 
 void MainWindow::showStopped() {
     SetWindowTextW(hPhaseLabel_, L"STOPPED");
     SetWindowTextW(hTimeLabel_, L"00:00");
+    updateTitle();   // timer no longer running -> restore the plain title
+}
+
+// Taskbar/title text: "Work: MM:SS" / "Rest: MM:SS" while minimized and
+// running; the plain application name otherwise. The taskbar button label is
+// the window caption, so updating the title updates the taskbar text.
+void MainWindow::updateTitle() {
+    if (!hwnd_) {
+        return;
+    }
+    if (minimized_ && timer_.running()) {
+        wchar_t title[32];
+        StringCchPrintfW(title, ARRAYSIZE(title), L"%s: %02d:%02d",
+                         lastPhase_ == Phase::Work ? L"Work" : L"Rest",
+                         lastRemaining_ / 60, lastRemaining_ % 60);
+        SetWindowTextW(hwnd_, title);
+    } else {
+        SetWindowTextW(hwnd_, kBaseTitle);
+    }
 }
 
 void MainWindow::setControlsRunning(bool running) {
@@ -324,6 +348,18 @@ LRESULT MainWindow::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
         createControls();
+        return 0;
+
+    case WM_SIZE:
+        // Track minimize/restore so the title shows the countdown only while
+        // minimized. SIZE_MINIMIZED fires on minimize; SIZE_RESTORED/MAXIMIZED
+        // on return.
+        if (wParam == SIZE_MINIMIZED) {
+            minimized_ = true;
+        } else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
+            minimized_ = false;
+        }
+        updateTitle();
         return 0;
 
     case WM_COMMAND:

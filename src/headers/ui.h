@@ -39,6 +39,10 @@ private:
     void openSettingsDialog();
     void applyDefaultTimesToFields();
 
+    // Refresh the window title (taskbar text): "Work: MM:SS" / "Rest: MM:SS"
+    // while minimized and running; the plain app name otherwise.
+    void updateTitle();
+
     // Read a field + unit combo into seconds; std::nullopt if invalid.
     std::optional<int> readDuration(HWND edit, HWND unit, int minSeconds) const;
 
@@ -59,6 +63,12 @@ private:
     Settings      settings_;
     WorkSound     sound_;
     PomodoroTimer timer_;
+
+    // Latest values received from the timer, cached so the taskbar title can
+    // be formatted as "Work: MM:SS" / "Rest: MM:SS" when minimized.
+    Phase lastPhase_       = Phase::Work;
+    int   lastRemaining_   = 0;
+    bool  minimized_       = false;
 };
 
 #endif // TOMATO_UI_H
