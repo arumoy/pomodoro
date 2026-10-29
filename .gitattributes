@@ -1,0 +1,35 @@
+# Normalize line endings: let Git decide text handling automatically, and
+# store text as LF in the repository.
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+# Windows-native scripts: keep CRLF in the working tree so they run correctly
+# under cmd.exe / PowerShell.
+# ---------------------------------------------------------------------------
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Source / text files: enforce LF.
+# ---------------------------------------------------------------------------
+*.cpp       text eol=lf
+*.h         text eol=lf
+*.hpp       text eol=lf
+*.rc        text eol=lf
+*.manifest  text eol=lf
+*.md        text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
+
+# ---------------------------------------------------------------------------
+# Binary assets: never normalize or diff as text.
+# ---------------------------------------------------------------------------
+*.png   binary
+*.ico   binary
+*.exe   binary
+*.obj   binary
+*.res   binary
+
+# Treat images with a friendlier diff label (optional, cosmetic).
+*.png   diff=exif

@@ -1,0 +1,13 @@
+// pomodoro.rc - resource script
+// Embeds the application manifest so the app uses Common Controls v6
+// (modern visual styles) and declares DPI awareness.
+
+#include <windows.h>
+
+// Application icon. The lowest numeric ID becomes the icon Explorer shows for
+// the .exe. We also load it by this ID at runtime for the window/taskbar.
+#define IDI_APPICON 101
+IDI_APPICON ICON "..\\resources\\tomato.ico"
+
+// 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID (manifest for the .exe)
+1 RT_MANIFEST "pomodoro.manifest"
