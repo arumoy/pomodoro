@@ -36,6 +36,20 @@
 
 // Resource IDs (must match pomodoro.rc).
 #define IDI_APPICON     101
+#define IDD_SETTINGS    201   // Settings dialog template
+#define IDC_SET_WORK    202   // dialog: default work minutes edit
+#define IDC_SET_REST    203   // dialog: default rest minutes edit
+
+// Menu command IDs.
+#define IDM_SETTINGS    301   // Settings -> Default Times...
+#define IDM_EXIT        302   // Settings -> Exit
+
+// Persistent-settings bounds (minutes).
+#define MIN_DEFAULT_WORK_MIN 1
+#define MIN_DEFAULT_REST_MIN 0
+#define MAX_DEFAULT_MIN      600
+#define DEFAULT_WORK_MIN     25   // factory default if nothing is stored
+#define DEFAULT_REST_MIN     5
 
 // Unit combo-box item indices.
 #define UNIT_MINUTES    0
@@ -83,6 +97,73 @@ static HFONT    g_hTimeFont  = NULL;
 static HFONT    g_hPhaseFont = NULL;
 static HFONT    g_hUiFont    = NULL;   // Garamond for inputs/buttons/labels
 static HBRUSH   g_hBgBrush   = NULL;   // light orange background brush
+
+// Persisted default time values (in minutes). Loaded at startup from the
+// registry and applied to the input fields; editable via Settings.
+static int g_defaultWorkMin = DEFAULT_WORK_MIN;
+static int g_defaultRestMin = DEFAULT_REST_MIN;
+
+// Standard per-user settings location on Windows: HKCU\Software\...
+#define SETTINGS_SUBKEY  L"Software\\Tomato\\PomodoroTimer"
+#define VAL_WORK_MIN     L"DefaultWorkMinutes"
+#define VAL_REST_MIN     L"DefaultRestMinutes"
+
+// Read a DWORD value from the settings key. Returns TRUE and writes *out when
+// the value exists; otherwise leaves *out untouched and returns FALSE.
+static BOOL RegReadDword(const wchar_t *valueName, DWORD *out) {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, SETTINGS_SUBKEY, 0, KEY_QUERY_VALUE,
+                      &hKey) != ERROR_SUCCESS) {
+        return FALSE;
+    }
+    DWORD type = 0, data = 0, cb = sizeof(data);
+    LONG rc = RegQueryValueExW(hKey, valueName, NULL, &type,
+                               (LPBYTE)&data, &cb);
+    RegCloseKey(hKey);
+    if (rc == ERROR_SUCCESS && type == REG_DWORD) {
+        *out = data;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// Write a DWORD value into the settings key (creating the key if needed).
+static BOOL RegWriteDword(const wchar_t *valueName, DWORD value) {
+    HKEY hKey;
+    DWORD disp = 0;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, SETTINGS_SUBKEY, 0, NULL,
+                        REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL,
+                        &hKey, &disp) != ERROR_SUCCESS) {
+        return FALSE;
+    }
+    LONG rc = RegSetValueExW(hKey, valueName, 0, REG_DWORD,
+                             (const BYTE *)&value, sizeof(value));
+    RegCloseKey(hKey);
+    return rc == ERROR_SUCCESS;
+}
+
+// Load persisted defaults into the globals, clamping to valid bounds. Missing
+// values fall back to the factory defaults already in the globals.
+static void LoadSettings(void) {
+    DWORD v;
+    if (RegReadDword(VAL_WORK_MIN, &v)) {
+        if (v >= MIN_DEFAULT_WORK_MIN && v <= MAX_DEFAULT_MIN) {
+            g_defaultWorkMin = (int)v;
+        }
+    }
+    if (RegReadDword(VAL_REST_MIN, &v)) {
+        if (v <= MAX_DEFAULT_MIN) {  // rest min is 0
+            g_defaultRestMin = (int)v;
+        }
+    }
+}
+
+// Persist the current default globals to the registry.
+static BOOL SaveSettings(void) {
+    BOOL ok = RegWriteDword(VAL_WORK_MIN, (DWORD)g_defaultWorkMin);
+    ok = RegWriteDword(VAL_REST_MIN, (DWORD)g_defaultRestMin) && ok;
+    return ok;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -286,17 +367,27 @@ static void CreateControls(HWND hwnd) {
                     20, 58, 90, 22, hwnd, NULL, hInst, NULL);
 
     // Numeric edit fields. ES_NUMBER restricts to digits at the UI layer.
+    // Initial text is set below from the persisted default settings.
     g_app.hWorkEdit = CreateWindowExW(
-        WS_EX_CLIENTEDGE, L"EDIT", L"25",
+        WS_EX_CLIENTEDGE, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_LEFT,
         120, 22, 70, 24, hwnd, (HMENU)(INT_PTR)IDC_WORK_EDIT, hInst, NULL);
     SendMessageW(g_app.hWorkEdit, EM_SETLIMITTEXT, 3, 0);
 
     g_app.hRestEdit = CreateWindowExW(
-        WS_EX_CLIENTEDGE, L"EDIT", L"5",
+        WS_EX_CLIENTEDGE, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_LEFT,
         120, 56, 70, 24, hwnd, (HMENU)(INT_PTR)IDC_REST_EDIT, hInst, NULL);
     SendMessageW(g_app.hRestEdit, EM_SETLIMITTEXT, 3, 0);
+
+    // Apply the persisted default time values (in minutes).
+    {
+        wchar_t num[16];
+        StringCchPrintfW(num, ARRAYSIZE(num), L"%d", g_defaultWorkMin);
+        SetWindowTextW(g_app.hWorkEdit, num);
+        StringCchPrintfW(num, ARRAYSIZE(num), L"%d", g_defaultRestMin);
+        SetWindowTextW(g_app.hRestEdit, num);
+    }
 
     // Unit dropdowns (Minutes / Seconds) for each field. Use a drop-down list
     // (CBS_DROPDOWNLIST) so the user can only pick from the two options.
@@ -378,6 +469,98 @@ static void CreateControls(HWND hwnd) {
 }
 
 // ---------------------------------------------------------------------------
+// Settings dialog
+// ---------------------------------------------------------------------------
+
+// Parse a dialog edit control as an integer in [lo, hi]. Returns TRUE on
+// success. Rejects non-digits and out-of-range values.
+static BOOL GetDlgInt(HWND hDlg, int ctlId, int lo, int hi, int *out) {
+    wchar_t buf[16] = {0};
+    if (GetDlgItemTextW(hDlg, ctlId, buf, ARRAYSIZE(buf)) == 0) {
+        return FALSE;
+    }
+    for (const wchar_t *p = buf; *p; ++p) {
+        if (*p < L'0' || *p > L'9') {
+            return FALSE;
+        }
+    }
+    long v = 0;
+    for (const wchar_t *p = buf; *p; ++p) {
+        v = v * 10 + (*p - L'0');
+        if (v > hi) return FALSE;
+    }
+    if (v < lo || v > hi) return FALSE;
+    *out = (int)v;
+    return TRUE;
+}
+
+static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam,
+                                        LPARAM lParam) {
+    (void)lParam;
+    switch (msg) {
+    case WM_INITDIALOG: {
+        // Only digits, up to 3 chars, in each field; seed with current values.
+        SendDlgItemMessageW(hDlg, IDC_SET_WORK, EM_SETLIMITTEXT, 3, 0);
+        SendDlgItemMessageW(hDlg, IDC_SET_REST, EM_SETLIMITTEXT, 3, 0);
+        SetDlgItemInt(hDlg, IDC_SET_WORK, (UINT)g_defaultWorkMin, FALSE);
+        SetDlgItemInt(hDlg, IDC_SET_REST, (UINT)g_defaultRestMin, FALSE);
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDOK: {
+            int work = 0, rest = 0;
+            if (!GetDlgInt(hDlg, IDC_SET_WORK, MIN_DEFAULT_WORK_MIN,
+                           MAX_DEFAULT_MIN, &work)) {
+                MessageBoxW(hDlg,
+                            L"Default Work minutes must be a whole number "
+                            L"from 1 to 600.",
+                            L"Invalid setting", MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+            if (!GetDlgInt(hDlg, IDC_SET_REST, MIN_DEFAULT_REST_MIN,
+                           MAX_DEFAULT_MIN, &rest)) {
+                MessageBoxW(hDlg,
+                            L"Default Rest minutes must be a whole number "
+                            L"from 0 to 600.",
+                            L"Invalid setting", MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+
+            g_defaultWorkMin = work;
+            g_defaultRestMin = rest;
+            if (!SaveSettings()) {
+                MessageBoxW(hDlg,
+                            L"The settings could not be saved to the registry.",
+                            L"Warning", MB_OK | MB_ICONWARNING);
+            }
+
+            // Reflect the new defaults in the main window if idle.
+            if (!g_app.running) {
+                wchar_t num[16];
+                StringCchPrintfW(num, ARRAYSIZE(num), L"%d", g_defaultWorkMin);
+                SetWindowTextW(g_app.hWorkEdit, num);
+                SendMessageW(g_app.hWorkUnit, CB_SETCURSEL, UNIT_MINUTES, 0);
+                StringCchPrintfW(num, ARRAYSIZE(num), L"%d", g_defaultRestMin);
+                SetWindowTextW(g_app.hRestEdit, num);
+                SendMessageW(g_app.hRestUnit, CB_SETCURSEL, UNIT_MINUTES, 0);
+            }
+
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+        case IDCANCEL:
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+
+// ---------------------------------------------------------------------------
 // Window procedure
 // ---------------------------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -394,6 +577,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam,
             return 0;
         case IDC_STOP_BTN:
             StopTimer(hwnd);
+            return 0;
+        case IDM_SETTINGS: {
+            HINSTANCE hInst =
+                (HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE);
+            DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_SETTINGS), hwnd,
+                       SettingsDlgProc);
+            return 0;
+        }
+        case IDM_EXIT:
+            DestroyWindow(hwnd);
             return 0;
         }
         break;
@@ -433,6 +626,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     PWSTR pCmdLine, int nCmdShow) {
     (void)hPrevInstance;
     (void)pCmdLine;
+
+    // Load persisted default time values (HKCU\Software\Tomato\PomodoroTimer)
+    // before any controls are created so the fields show the saved defaults.
+    LoadSettings();
 
     // Initialize common controls for modern visual styles.
     INITCOMMONCONTROLSEX icc;
@@ -481,14 +678,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // Fixed-size client area: compute window size from desired client rect.
     RECT rc = {0, 0, 420, 300};
     DWORD style = (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX);
-    AdjustWindowRect(&rc, style, FALSE);
+    AdjustWindowRect(&rc, style, TRUE);  // TRUE: window has a menu bar
+
+    // Build the menu bar: a top-level "Settings" popup containing the
+    // "Default Times..." command and "Exit".
+    HMENU hMenuBar = CreateMenu();
+    HMENU hSettings = CreatePopupMenu();
+    AppendMenuW(hSettings, MF_STRING, IDM_SETTINGS, L"Default Times...");
+    AppendMenuW(hSettings, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hSettings, MF_STRING, IDM_EXIT, L"Exit");
+    AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hSettings, L"Settings");
 
     HWND hwnd = CreateWindowExW(
         0, CLASS_NAME, L"Pomodoro Timer",
         style,
         CW_USEDEFAULT, CW_USEDEFAULT,
         rc.right - rc.left, rc.bottom - rc.top,
-        NULL, NULL, hInstance, NULL);
+        NULL, hMenuBar, hInstance, NULL);
 
     if (!hwnd) {
         MessageBoxW(NULL, L"Failed to create window.", L"Error",

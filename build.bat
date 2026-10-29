@@ -81,7 +81,7 @@ cl /nologo /W4 /EHsc /O2 /GS /sdl /DUNICODE /D_UNICODE ^
    /Fo"%OBJDIR%\\" ^
    "%SRC%" "%RES%" ^
    /link /subsystem:windows ^
-   user32.lib gdi32.lib comctl32.lib ^
+   user32.lib gdi32.lib comctl32.lib advapi32.lib ^
    /out:"%OUT%"
 if errorlevel 1 (
     echo [ERROR] Build failed.

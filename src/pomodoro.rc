@@ -11,3 +11,21 @@ IDI_APPICON ICON "..\\resources\\tomato.ico"
 
 // 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID (manifest for the .exe)
 1 RT_MANIFEST "pomodoro.manifest"
+
+// ---------------------------------------------------------------------------
+// Settings dialog
+//   IDD_SETTINGS = 201, IDC_SET_WORK = 202, IDC_SET_REST = 203
+//   (These numeric IDs must match the #defines in pomodoro.cpp.)
+// ---------------------------------------------------------------------------
+201 DIALOGEX 0, 0, 200, 96
+STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Settings - Default Times"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Default Work (minutes):", -1,   10, 12, 110, 10
+    EDITTEXT        202,                            130, 10,  50, 14, ES_NUMBER | ES_AUTOHSCROLL
+    LTEXT           "Default Rest (minutes):", -1,    10, 34, 110, 10
+    EDITTEXT        203,                            130, 32,  50, 14, ES_NUMBER | ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",       1,                   70, 68,  55, 16
+    PUSHBUTTON      "Cancel",   2,                  132, 68,  55, 16
+END
